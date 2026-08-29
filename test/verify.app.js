@@ -148,6 +148,23 @@ async function verifySig(call) {
   assert(logLines.some(l => /大富翁冷却中/.test(l)), 'cooldown retry attempts were logged');
   assert(!logLines.join('\n').includes('[object Object]'), 'still no [object Object]');
 
+  console.log('--- community already-bet this period -> skip (append disabled default) ---');
+  calls.length = 0; logLines.length = 0; failBp = false; monoBudget = null;
+  canned['/api/portal/games/community-lottery/status'].my_bet = { numbers: [3, 7, 12] };
+  store['dian115_auto_lastrun'] = JSON.stringify({ date: 'nope', state: 'x' });
+  eval(SRC); await drain();
+  assert(calls.filter(c => c.url.includes('community-lottery/buy')).length === 0, 'no buy when already bet this period (skip)');
+  assert(logLines.some(l => l.includes('本期已投注') && l.includes('03,07,12')), 'skip logged with existing numbers 03,07,12');
+
+  console.log('--- community append enabled -> buy SAME group, not random ---');
+  calls.length = 0; logLines.length = 0;
+  store['dian115_auto_lastrun'] = JSON.stringify({ date: 'nope', state: 'x' });
+  eval(SRC.replace('COMMUNITY_APPEND_ENABLED: false', 'COMMUNITY_APPEND_ENABLED: true')); await drain();
+  const buyApp = calls.filter(c => c.url.includes('community-lottery/buy'));
+  assert(buyApp.length === 1, 'append performs one buy');
+  assert(buyApp[0] && JSON.stringify(buyApp[0].body.numbers) === JSON.stringify([3, 7, 12]), 'append uses the SAME numbers as existing bet (03,07,12)');
+  assert(logLines.some(l => l.includes('追加') && l.includes('03,07,12')), 'append log marked 追加 03,07,12');
+
   console.log('\nRESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })();

@@ -2,7 +2,7 @@
 // @name         癫影 m.dian115.com 每日自动任务
 // @namespace    https://github.com/inybit/dian115-auto-task
 // @description  自动完成 m.dian115.com 每日例行：签到、幸运转盘、幸运大富翁、社区三色球。内置站点 BrowserProof 签名防爬客户端（复用站点 ECDSA 私钥），复用当前登录会话。
-// @version      1.2.1
+// @version      1.2.2
 // @author       librarian
 // @match        https://m.dian115.com/*
 // @grant        none
@@ -56,6 +56,9 @@
     // 显式填恰好 3 个合法数字则定点下注；留空/非法则每期随机选 3 个不重复号。
     COMMUNITY_NUMBERS: [],
     COMMUNITY_UNITS: 2,            // 每期投注注数（默认随机投 2 注）
+    // 本期已投注（status.my_bet 存在）时的行为：默认跳过（防手动重跑重复烧分/随机换号被拒）；
+    // 设 true 则改为追加 COMMUNITY_UNITS 注到【同一组已选号码】。
+    COMMUNITY_APPEND_ENABLED: false,
     BALANCE_FLOOR: 10,
   };
   const API_BASE = '/api/portal';
@@ -361,12 +364,25 @@
         log(`社区三色球跳过：余额 ${floor} 低于安全阈值`, 'warn');
         return;
       }
+      const existing = (st.my_bet && Array.isArray(st.my_bet.numbers) && st.my_bet.numbers.length === 3)
+        ? st.my_bet.numbers.map(Number) : null;
+      const maxBuy = st.max_buy ?? st.remaining ?? st.ticket_count ?? 1;
+      if (existing) {
+        const existShow = existing.map(n => String(n).padStart(2, '0')).join(',');
+        if (CONFIG.COMMUNITY_APPEND_ENABLED) {
+          const units = Math.max(1, Math.min(CONFIG.COMMUNITY_UNITS, maxBuy));
+          const r = await api('/games/community-lottery/buy', 'POST', { numbers: existing, units });
+          log(`社区三色球追加：${existShow} +${units} 注${bal(r.new_balance ?? floor)}`);
+        } else {
+          log(`社区三色球本期已投注（${existShow}），跳过重复投注（COMMUNITY_APPEND_ENABLED=false）`, 'info');
+        }
+        return;
+      }
       const cfg = (Array.isArray(CONFIG.COMMUNITY_NUMBERS) ? CONFIG.COMMUNITY_NUMBERS.map(Number) : [])
         .filter(n => Number.isInteger(n) && n >= 1 && n <= numberMax);
       const useFixed = cfg.length === 3 && new Set(cfg).size === 3;
       const numbers = useFixed ? cfg : randomPick3(numberMax);
       const tag = useFixed ? '指定号' : '随机';
-      const maxBuy = st.max_buy ?? st.remaining ?? st.ticket_count ?? 1;
       const units = Math.max(1, Math.min(CONFIG.COMMUNITY_UNITS, maxBuy));
       const r = await api('/games/community-lottery/buy', 'POST', { numbers, units });
       const show = numbers.map(n => String(n).padStart(2, '0')).join(',');
