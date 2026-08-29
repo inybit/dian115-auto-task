@@ -2,7 +2,7 @@
 // @name         癫影 m.dian115.com 每日自动任务
 // @namespace    https://github.com/inybit/dian115-auto-task
 // @description  自动完成 m.dian115.com 每日例行：签到、幸运转盘、幸运大富翁、社区三色球。内置站点 BrowserProof 签名防爬客户端（复用站点 ECDSA 私钥），复用当前登录会话。
-// @version      1.2.0
+// @version      1.2.1
 // @author       librarian
 // @match        https://m.dian115.com/*
 // @grant        none
@@ -47,8 +47,13 @@
     SIGNIN_ENABLED: true,
     WHEEL_ENABLED: true,
     MONOPOLY_ENABLED: true,
+    // 大富翁有服务端冷却（无时间戳可读）。遇"用完或冷却"时，等待 MONOPOLY_COOLDOWN_MS 重试，
+    // 最多 MONOPOLY_MAX_ATTEMPTS 次；总等待预算 = COOLDOWN_MS × MAX_ATTEMPTS。设 0 即遇冷却直接停。
+    MONOPOLY_COOLDOWN_MS: 20000,
+    MONOPOLY_MAX_ATTEMPTS: 10,
     COMMUNITY_ENABLED: true,
-    // 社区三色球：显式填 3 个号码则用指定号；留空则每期随机选 3 个（1~99）。
+    // 社区三色球：号码范围 1..settings.number_max（默认 15，即 01-15）。
+    // 显式填恰好 3 个合法数字则定点下注；留空/非法则每期随机选 3 个不重复号。
     COMMUNITY_NUMBERS: [],
     COMMUNITY_UNITS: 2,            // 每期投注注数（默认随机投 2 注）
     BALANCE_FLOOR: 10,
@@ -291,7 +296,8 @@
       else log(`签到完成（倒霉签 ${r.award}，余额 ${r.new_balance}）`, 'warn');
     } catch (e) {
       if (e.code === 'AUTH') throw e;
-      log(`签到失败：${e.message}`, 'error');
+      if (/已签到/.test(e.message)) log('今日已签到，跳过', 'info');
+      else log(`签到失败：${e.message}`, 'error');
     }
   }
 
@@ -316,43 +322,55 @@
   async function doMonopoly(status) {
     if (!CONFIG.MONOPOLY_ENABLED || !status?.monopoly) return;
     const g = status.monopoly;
+    let attempts = 0;
     while (g.used_today < g.max_plays) {
       try {
         const r = await api('/games/monopoly/play', 'POST');
-        g.used_today++;
+        g.used_today++; attempts = 0;
         const step = (r.steps && r.steps[r.steps.length - 1]);
         log(`幸运大富翁第 ${g.used_today}/${g.max_plays} 次 -> 本局奖励 +${r.award_points ?? 0} 分（${step?.label ?? ''}）${bal(r.new_balance)}`);
         if (typeof r.new_balance === 'number') g.balance = r.new_balance;
+        await sleep(1800);
       } catch (e) {
         if (e.code === 'AUTH') throw e;
-        log(`幸运大富翁暂停：${e.message}`, 'warn'); break;
+        const remaining = g.max_plays - g.used_today;
+        attempts++;
+        if (CONFIG.MONOPOLY_COOLDOWN_MS > 0 && attempts <= CONFIG.MONOPOLY_MAX_ATTEMPTS) {
+          log(`大富翁冷却中（已 ${g.used_today}/${g.max_plays}，剩 ${remaining} 次），${Math.round(CONFIG.MONOPOLY_COOLDOWN_MS / 1000)}s 后重试 ${attempts}/${CONFIG.MONOPOLY_MAX_ATTEMPTS} …`, 'warn');
+          await sleep(CONFIG.MONOPOLY_COOLDOWN_MS);
+          continue;
+        }
+        log(`幸运大富翁暂停：${e.message}（今日完成 ${g.used_today}/${g.max_plays}，剩 ${remaining} 次未跑）`, 'warn');
+        break;
       }
-      await sleep(1800);
     }
   }
 
-  function randomPick3() {
+  function randomPick3(max) {
     const set = new Set();
-    while (set.size < 3) set.add(1 + Math.floor(Math.random() * 99));
+    while (set.size < 3) set.add(1 + Math.floor(Math.random() * max));
     return [...set];
   }
   async function doCommunity() {
     if (!CONFIG.COMMUNITY_ENABLED) return;
-    const numbers = (Array.isArray(CONFIG.COMMUNITY_NUMBERS) && CONFIG.COMMUNITY_NUMBERS.filter(n => Number.isFinite(Number(n))).length === 3)
-      ? CONFIG.COMMUNITY_NUMBERS.map(Number)
-      : randomPick3();
-    const tag = (Array.isArray(CONFIG.COMMUNITY_NUMBERS)
-      && CONFIG.COMMUNITY_NUMBERS.filter(n => Number.isFinite(Number(n))).length === 3) ? '指定号' : '随机';
     try {
       const st = await api('/games/community-lottery/status');
-      if (typeof st.balance === 'number' && st.balance < CONFIG.BALANCE_FLOOR) {
-        log(`社区三色球跳过：余额 ${st.balance} 低于安全阈值`, 'warn');
+      const numberMax = Number(st.settings?.number_max) || 15;   // 01-15
+      const floor = (typeof st.balance === 'number') ? st.balance : undefined;
+      if (typeof floor === 'number' && floor < CONFIG.BALANCE_FLOOR) {
+        log(`社区三色球跳过：余额 ${floor} 低于安全阈值`, 'warn');
         return;
       }
+      const cfg = (Array.isArray(CONFIG.COMMUNITY_NUMBERS) ? CONFIG.COMMUNITY_NUMBERS.map(Number) : [])
+        .filter(n => Number.isInteger(n) && n >= 1 && n <= numberMax);
+      const useFixed = cfg.length === 3 && new Set(cfg).size === 3;
+      const numbers = useFixed ? cfg : randomPick3(numberMax);
+      const tag = useFixed ? '指定号' : '随机';
       const maxBuy = st.max_buy ?? st.remaining ?? st.ticket_count ?? 1;
       const units = Math.max(1, Math.min(CONFIG.COMMUNITY_UNITS, maxBuy));
       const r = await api('/games/community-lottery/buy', 'POST', { numbers, units });
-      log(`社区三色球已购入：${tag} ${numbers.join(',')} × ${units} 注${bal(r.new_balance ?? st.balance)}`);
+      const show = numbers.map(n => String(n).padStart(2, '0')).join(',');
+      log(`社区三色球已购入：${tag} ${show} × ${units} 注${bal(r.new_balance ?? floor)}`);
     } catch (e) {
       if (e.code === 'AUTH') throw e;
       log(`社区三色球失败：${e.message}`, 'error');

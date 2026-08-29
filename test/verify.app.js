@@ -24,6 +24,7 @@ const makeEl = () => ({ style: {}, cssText: '', hidden: false, textContent: '', 
 const calls = [];
 const logLines = [];
 let failBp = false;
+let monoBudget = null;   // null=always ok; else allow N successes then cooldown-fail
 const makeRes = (status, payload) => ({ status, ok: status >= 200 && status < 300, clone() { return makeRes(status, payload); }, async json() { return JSON.parse(JSON.stringify(payload)); } });
 const canned = {
   '/api/portal/auth/browser-challenge': { enabled: true, proof: 'PROOF_ABC', ttl: 600 },
@@ -32,7 +33,7 @@ const canned = {
   '/api/portal/signin': { award: 8, new_balance: 114 },
   '/api/portal/lottery/wheel': { prize: { sector: 0, label: '+3', points: 3 } },         // prize is an OBJECT, no new_balance (mirrors real site)
   '/api/portal/games/monopoly/play': { award_points: 6, steps: [{ label: '+1', points: 1 }], new_balance: 115 },
-  '/api/portal/games/community-lottery/status': { participant_count: 12, ticket_count: 60, max_buy: 5, remaining: 5, balance: 500 },
+  '/api/portal/games/community-lottery/status': { participant_count: 12, ticket_count: 60, max_buy: 5, remaining: 5, balance: 500, settings: { number_max: 15 } },
   '/api/portal/games/community-lottery/buy': { new_balance: 120 },
 };
 async function mockFetch(url, o = {}) {
@@ -41,6 +42,10 @@ async function mockFetch(url, o = {}) {
   const key = url.split('?')[0];
   if (!canned[key]) return makeRes(404, { code: 'not_found' });
   if (failBp && /games\/status/.test(key) && calls.filter(c => c.url === key).length === 1) return makeRes(403, { code: 'browser_proof_required', msg: 'browser proof required' });
+  if (monoBudget !== null && /monopoly\/play/.test(key)) {
+    if (monoBudget > 0) { monoBudget--; }
+    else return makeRes(403, { code: 'monopoly_cooldown', msg: '今日次数已用完或冷却中' });
+  }
   return makeRes(200, canned[key]);
 }
 function install() {
@@ -98,7 +103,7 @@ async function verifySig(call) {
   assert(buy.length === 1, 'community buy auto-called once (enabled by default)');
   if (buy[0]) {
     const nums = buy[0].body.numbers;
-    assert(Array.isArray(nums) && nums.length === 3 && nums.every(n => Number.isInteger(n) && n >= 1 && n <= 99), `community picks 3 ints in 1..99 (${JSON.stringify(nums)})`);
+    assert(Array.isArray(nums) && nums.length === 3 && nums.every(n => Number.isInteger(n) && n >= 1 && n <= 15), `community picks 3 ints in 01..15 (${JSON.stringify(nums)})`);
     assert(new Set(nums).size === 3, 'community numbers are distinct');
     assert(buy[0].body.units === 2, 'community bets 2 units (COMMUNITY_UNITS default)');
   }
@@ -113,12 +118,35 @@ async function verifySig(call) {
   calls.length = 0; eval(SRC); await drain();
   assert(calls.length === 0, 'no API calls on same-day reload');
 
+  console.log('--- fixed numbers path (COMMUNITY_NUMBERS=[3,7,12]) ---');
+  calls.length = 0; logLines.length = 0;
+  store['dian115_auto_lastrun'] = JSON.stringify({ date: 'nope', state: 'x' });
+  eval(SRC.replace('COMMUNITY_NUMBERS: [],', 'COMMUNITY_NUMBERS: [3, 7, 12],'));
+  await drain();
+  const buyFixed = calls.find(c => c.url.includes('community-lottery/buy'));
+  assert(buyFixed && JSON.stringify(buyFixed.body.numbers) === JSON.stringify([3, 7, 12]), 'fixed numbers honored when set (not random)');
+  assert(logLines.some(l => l.includes('指定号') && l.includes('03,07,12')), 'log marks fixed numbers as 指定号 03,07,12');
+
   console.log('--- proof failure -> reset -> retry ---');
   calls.length = 0; failBp = true;
   store['dian115_auto_lastrun'] = JSON.stringify({ date: 'nope', state: 'x' });
   eval(SRC); await new Promise(r => global.setTimeout(r, 50)); await drain();
   assert(calls.filter(c => c.url === '/api/portal/games/status').length >= 2, 'games/status retried on browser_proof_required');
   assert(calls.some(c => c.url === '/api/portal/signin' && c.headers['X-Portal-Browser-Proof']), 'post-retry request carries proof headers');
+
+  console.log('--- monopoly cooldown => bounded retry then graceful stop ---');
+  calls.length = 0; logLines.length = 0; failBp = false;
+  monoBudget = 2;                                        // 2 次成功后第 3 次起冷却
+  canned['/api/portal/games/status'].items.monopoly.max_plays = 8;
+  store['dian115_auto_lastrun'] = JSON.stringify({ date: 'nope', state: 'x' });
+  eval(SRC); await drain();
+  const monoOk = calls.filter(c => c.url === '/api/portal/games/monopoly/play' && (c.method === 'POST')).length;
+  assert(monoOk >= 2, `2 successful monopoly plays before cooldown (got ${monoOk} ok)`);
+  const stopLine = logLines.find(l => l.includes('幸运转盘') === false && l.includes('幸运大富翁暂停'));
+  const graceful = logLines.find(l => l.includes('剩 ') && l.includes(' 次未跑'));
+  assert(graceful || logLines.some(l => /今日完成 \d+\/8，剩 \d+ 次未跑/.test(l)), 'graceful stop message reports completed + remaining');
+  assert(logLines.some(l => /大富翁冷却中/.test(l)), 'cooldown retry attempts were logged');
+  assert(!logLines.join('\n').includes('[object Object]'), 'still no [object Object]');
 
   console.log('\nRESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

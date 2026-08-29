@@ -34,12 +34,14 @@
 | `WHEEL_ENABLED` | `true` | 幸运转盘开关 |
 | `MONOPOLY_ENABLED` | `true` | 幸运大富翁开关 |
 | `COMMUNITY_ENABLED` | `true` | 社区三色球开关（默认开：随机选 3 号投注，消耗积分） |
-| `COMMUNITY_NUMBERS` | `[]` | 社区三色球指定号码：填恰好 3 个（如 `[7, 21, 66]`）则固定下注；留空则每期随机选 3 个（1~99） |
+| `COMMUNITY_NUMBERS` | `[]` | 社区三色球指定号码：填恰好 3 个 `1..settings.number_max`（默认 01-15）合法号则固定下注；留空/越界则每期随机选 3 个不重复号 |
 | `COMMUNITY_UNITS` | `2` | 每期投注注数 |
+| `MONOPOLY_COOLDOWN_MS` | `20000` | 大富翁遇服务端冷却时的重试等待（ms）。总预算 = `COOLDOWN_MS×MAX_ATTEMPTS`；设 `0` 遇冷却直接停 |
+| `MONOPOLY_MAX_ATTEMPTS` | `10` | 大富翁冷却重试上限（次） |
 | `BALANCE_FLOOR` | `10` | 余额安全阀，低于此值停止耗分动作 |
 
-> 社区三色球默认每期**随机选 3 个号码 × 2 注**（消耗积分）。固定下注：填 `COMMUNITY_NUMBERS = [a, b, c]`
-> 即用指定号码；留空则随机。不想自动投注，把 `COMMUNITY_ENABLED` 设为 `false`。
+> 社区三色球默认每期**随机选 3 个号码（01-15）× 2 注**（消耗积分）。固定下注：填 `COMMUNITY_NUMBERS = [a, b, c]`
+> （a,b,c ∈ 1..15 且不重复）即用指定号码；留空则随机。不想自动投注，把 `COMMUNITY_ENABLED` 设为 `false`。
 
 ## BrowserProof 防爬（v1.1.0）
 
