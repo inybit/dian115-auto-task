@@ -2,7 +2,7 @@
 // @name         癫影 m.dian115.com 每日自动任务
 // @namespace    https://github.com/inybit/dian115-auto-task
 // @description  自动完成 m.dian115.com 每日例行：签到、幸运转盘、幸运大富翁、社区三色球。内置站点 BrowserProof 签名防爬客户端（复用站点 ECDSA 私钥），复用当前登录会话。
-// @version      1.1.0
+// @version      1.1.1
 // @author       librarian
 // @match        https://m.dian115.com/*
 // @grant        none
@@ -12,7 +12,7 @@
 // ==/UserScript==
 
 /**
- * ===== 逆向依据（v1.1.0） =====
+ * ===== 逆向依据（v1.1.x） =====
  * 站点 API 有自研 BrowserProof 防爬签名（axios 请求拦截器），裸 fetch 会被挡，
  * 服务端返回 {code:"browser_proof_required"}（即报错里的 "browser proof required"）。
  * 前置步骤（拦截器顺序）：
@@ -259,6 +259,18 @@
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  function fmtPrize(p) {
+    if (p == null) return '未知';
+    if (typeof p === 'string') return p || '未知';
+    const parts = [];
+    const label = p.label != null ? String(p.label) : '';
+    if (label) parts.push(label);
+    const pts = Number(p.points);
+    if (pts > 0 && label !== '+' + pts && !label.endsWith('+' + pts)) parts.push('+' + pts);
+    if (Number(p.vip_days) > 0) parts.push(`VIP ${p.vip_days}天`);
+    return parts.join(' ') || JSON.stringify(p);
+  }
+  const bal = v => (typeof v === 'number') ? `（余额 ${v}）` : '';
   function today() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -289,8 +301,8 @@
       try {
         const r = await api('/lottery/wheel', 'POST');
         g.used_today++;
-        log(`幸运转盘第 ${g.used_today}/${g.max_plays} 次 -> ${r.prize ?? '未知'}（余额 ${r.new_balance}）`);
-        if (r.new_balance !== undefined) g.balance = r.new_balance;
+        log(`幸运转盘第 ${g.used_today}/${g.max_plays} 次 -> ${fmtPrize(r.prize)}${bal(r.new_balance ?? r.balance)}`);
+        if (typeof r.new_balance === 'number') g.balance = r.new_balance;
       } catch (e) {
         if (e.code === 'AUTH') throw e;
         log(`幸运转盘失败：${e.message}`, 'error'); break;
@@ -307,11 +319,11 @@
         const r = await api('/games/monopoly/play', 'POST');
         g.used_today++;
         const step = (r.steps && r.steps[r.steps.length - 1]);
-        log(`幸运大富翁第 ${g.used_today}/${g.max_plays} 次 -> 本局奖励 +${r.award_points ?? 0} 分（${step?.label ?? ''}，余额 ${r.new_balance}）`);
-        g.balance = r.new_balance;
+        log(`幸运大富翁第 ${g.used_today}/${g.max_plays} 次 -> 本局奖励 +${r.award_points ?? 0} 分（${step?.label ?? ''}）${bal(r.new_balance)}`);
+        if (typeof r.new_balance === 'number') g.balance = r.new_balance;
       } catch (e) {
         if (e.code === 'AUTH') throw e;
-        log(`幸运大富翁失败：${e.message}`, 'error'); break;
+        log(`幸运大富翁暂停：${e.message}`, 'warn'); break;
       }
       await sleep(1800);
     }

@@ -22,6 +22,7 @@ const ls = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { 
 const makeEl = () => ({ style: {}, cssText: '', hidden: false, textContent: '', dataset: {}, children: [], _h: '', set innerHTML(v) { this._h = v; }, get innerHTML() { return this._h; }, appendChild() {}, setAttribute() {}, querySelector() { return makeEl(); }, addEventListener() {} });
 
 const calls = [];
+const logLines = [];
 let failBp = false;
 const makeRes = (status, payload) => ({ status, ok: status >= 200 && status < 300, clone() { return makeRes(status, payload); }, async json() { return JSON.parse(JSON.stringify(payload)); } });
 const canned = {
@@ -29,7 +30,7 @@ const canned = {
   '/api/portal/auth/browser-session': { enabled: true, ttl: 1800, server_time_ms: Date.now() },
   '/api/portal/games/status': { items: { daily_wheel: { used_today: 0, max_plays: 1, cost: 5, award_today: 0, daily_cap: 0 }, monopoly: { used_today: 0, max_plays: 1 }, community_lottery: { used_today: 0, max_plays: 5 } } },
   '/api/portal/signin': { award: 8, new_balance: 114 },
-  '/api/portal/lottery/wheel': { prize: '谢谢参与', new_balance: 109 },
+  '/api/portal/lottery/wheel': { prize: { sector: 0, label: '+3', points: 3 } },         // prize is an OBJECT, no new_balance (mirrors real site)
   '/api/portal/games/monopoly/play': { award_points: 6, steps: [{ label: '+1', points: 1 }], new_balance: 115 },
 };
 async function mockFetch(url, o = {}) {
@@ -49,6 +50,9 @@ function install() {
   global.window = { setTimeout: cb => cb() };
   global.document = { body: makeEl(), createElement: () => makeEl() };
   global.location = { pathname: '/me/signin', origin: 'https://m.dian115.com', href: 'https://m.dian115.com/me/signin' };
+  const ci = global.console.info, ce = global.console.error;
+  global.console.info = (...a) => { logLines.push(a.join(' ')); ci(...a); };
+  global.console.error = (...a) => { logLines.push(a.join(' ')); ce(...a); };
 }
 
 // ---------- harness ----------
@@ -70,13 +74,17 @@ async function verifySig(call) {
 (async () => {
   install();
   console.log('--- fresh day: order + proof headers + signature + disabled community ---');
-  assert(/@version\s+1\.1\.0/.test(SRC), 'script on disk is v1.1.0');
+  assert(/@version\s+1\.1\.[0-9]/.test(SRC), 'script on disk is v1.1.x');
   assert(SRC.includes('portal-browser-request/v1'), 'BrowserProof client present in source');
   eval(SRC); await drain();
   const biz = calls.filter(c => !c.url.includes('/auth/')).map(c => c.method + ' ' + c.url);
   assert(JSON.stringify(biz) === JSON.stringify(['GET /api/portal/games/status', 'POST /api/portal/signin', 'POST /api/portal/lottery/wheel', 'POST /api/portal/games/monopoly/play']), 'business order = status → signin → wheel → monopoly');
   assert(calls.some(c => c.url === '/api/portal/signin' && JSON.stringify(c.body) === '{"mode":"normal"}'), 'signin {mode:normal}');
   assert(calls.filter(c => c.url === '/api/portal/lottery/wheel').length === 1, 'wheel once (max_plays)');
+  const wheelLine = logLines.find(l => l.includes('幸运转盘第'));
+  assert(wheelLine && wheelLine.includes('+3'), 'wheel log renders prize OBJECT-readable (label "+3"), not [object Object]');
+  assert(wheelLine && !wheelLine.includes('undefined'), 'wheel log omits balance when response lacks new_balance (no "undefined")');
+  assert(!logLines.join('\n').includes('[object Object]'), 'no "[object Object]" anywhere in logs');
   assert(calls.filter(c => c.url === '/api/portal/games/monopoly/play').length === 1, 'monopoly once');
   assert(calls.filter(c => c.url.includes('community-lottery/buy')).length === 0, 'community buy NOT auto-called (default off)');
   const si = calls.find(c => c.url === '/api/portal/signin');
