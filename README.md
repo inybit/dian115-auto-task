@@ -41,6 +41,26 @@
 > 想自动玩三色球：把 `COMMUNITY_ENABLED` 设为 `true` 并填 `COMMUNITY_NUMBERS = [a, b, c]`。
 > 社区三色球是"开奖类"玩法，选号影响中奖，**请自行判断是否值得投注**。
 
+## BrowserProof 防爬（v1.1.0）
+
+站点对业务 API 做了自研的 **ECDSA 签名防爬**（axios 请求拦截器）。脚本 v1.0.0
+用裸 `fetch` 直调被挡，服务端返回 `browser_proof_required`（"browser proof required"）。
+脚本已内置完整客户端，逐字对齐逆向结果：
+
+1. 每请求带 `X-Portal-Visitor-ID`（复用 `localStorage.portal_visitor_id`）+ `X-Portal-Current-Path`
+2. `GET /auth/browser-challenge` → `{enabled, proof, ttl, expires_at}`（proof 缓存 ~30s）
+3. 有 proof 则带 `X-Portal-Browser-Proof`
+4. `POST /auth/browser-session` 注册 ECDSA P-256 公钥，返回 `server_time_ms` 做时钟对齐
+5. 用私钥对
+   `portal-browser-request/v1\n<METHOD>\n<path>\n<ts>\n<nonce>` 做 ECDSA-SHA256 签名 → base64url，
+   挂 `X-Portal-Browser-TS` / `-Nonce` / `-Sig`
+6. 遇 `code ∈ {browser_proof_required, browser_proof_invalid}` 自动重取 proof、重注册、重试一次
+
+**关键约束：** 私钥非可导出（`extractable:false`），存站点自身
+indexedDB `portal-browser-security-v1` / store `keys` / key `request-signing-p256`。
+脚本**复用同一把站点私钥**签名，绝不自主另建新钥——否则会与服务端当前绑定的公钥冲突，
+进而弄坏站内在用的请求。私钥缺失时才生成一把写回同一 store，与应用共享。
+
 ## 工作原理（逆向数组，便于自查）
 
 以下并入审计信息（base = `/api/portal`，cookie 认证）：
