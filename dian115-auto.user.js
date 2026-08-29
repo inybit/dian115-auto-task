@@ -2,7 +2,7 @@
 // @name         癫影 m.dian115.com 每日自动任务
 // @namespace    https://github.com/inybit/dian115-auto-task
 // @description  自动完成 m.dian115.com 每日例行：签到、幸运转盘、幸运大富翁、社区三色球。内置站点 BrowserProof 签名防爬客户端（复用站点 ECDSA 私钥），复用当前登录会话。
-// @version      1.1.1
+// @version      1.2.0
 // @author       librarian
 // @match        https://m.dian115.com/*
 // @grant        none
@@ -12,7 +12,7 @@
 // ==/UserScript==
 
 /**
- * ===== 逆向依据（v1.1.x） =====
+ * ===== 逆向依据（v1.2.x） =====
  * 站点 API 有自研 BrowserProof 防爬签名（axios 请求拦截器），裸 fetch 会被挡，
  * 服务端返回 {code:"browser_proof_required"}（即报错里的 "browser proof required"）。
  * 前置步骤（拦截器顺序）：
@@ -28,11 +28,12 @@
  *       —— 脚本必须【复用这把站点私钥】签名，绝不自建新钥（自建会与服务端当前绑定公钥冲突、弄坏站内请求）。
  *
  * 功能 API（base /api/portal，方法上表已逆向）：
- *   POST /signin {mode:"normal"|"lucky"}          单次
+ *   POST /signin {mode:"normal"|"lucky"}          单次（默认 lucky）
  *   POST /lottery/wheel                            按 daily_wheel.max_plays
  *   POST /games/monopoly/play                      按 monopoly.max_plays
  *   GET  /games/status                             取各项额度 {used_today,max_plays,award_today,daily_cap,cost}
- *   POST /games/community-lottery/buy {numbers[3],units}   需手动填号码，默认关
+ *   GET  /games/community-lottery/status           本期三色球状态（含可投上限/余额）
+ *   POST /games/community-lottery/buy {numbers[3],units}   默认随机 3 号 + 2 注/期，可填号码定点
  */
 
 (function () {
@@ -42,13 +43,14 @@
   const CONFIG = {
     AUTO_RUN: true,
     SHOW_PANEL: true,
-    SIGNIN_MODE: 'normal',
+    SIGNIN_MODE: 'lucky',          // 默认运气签到（可能大奖/空签/倒霉），改 'normal' 走稳健
     SIGNIN_ENABLED: true,
     WHEEL_ENABLED: true,
     MONOPOLY_ENABLED: true,
-    COMMUNITY_ENABLED: false,
+    COMMUNITY_ENABLED: true,
+    // 社区三色球：显式填 3 个号码则用指定号；留空则每期随机选 3 个（1~99）。
     COMMUNITY_NUMBERS: [],
-    COMMUNITY_UNITS: 1,
+    COMMUNITY_UNITS: 2,            // 每期投注注数（默认随机投 2 注）
     BALANCE_FLOOR: 10,
   };
   const API_BASE = '/api/portal';
@@ -329,18 +331,28 @@
     }
   }
 
+  function randomPick3() {
+    const set = new Set();
+    while (set.size < 3) set.add(1 + Math.floor(Math.random() * 99));
+    return [...set];
+  }
   async function doCommunity() {
     if (!CONFIG.COMMUNITY_ENABLED) return;
-    if (!Array.isArray(CONFIG.COMMUNITY_NUMBERS) || CONFIG.COMMUNITY_NUMBERS.length !== 3) {
-      log('社区三色球已开启但未填 3 个号码，跳过（请配置 COMMUNITY_NUMBERS）', 'warn');
-      return;
-    }
+    const numbers = (Array.isArray(CONFIG.COMMUNITY_NUMBERS) && CONFIG.COMMUNITY_NUMBERS.filter(n => Number.isFinite(Number(n))).length === 3)
+      ? CONFIG.COMMUNITY_NUMBERS.map(Number)
+      : randomPick3();
+    const tag = (Array.isArray(CONFIG.COMMUNITY_NUMBERS)
+      && CONFIG.COMMUNITY_NUMBERS.filter(n => Number.isFinite(Number(n))).length === 3) ? '指定号' : '随机';
     try {
       const st = await api('/games/community-lottery/status');
+      if (typeof st.balance === 'number' && st.balance < CONFIG.BALANCE_FLOOR) {
+        log(`社区三色球跳过：余额 ${st.balance} 低于安全阈值`, 'warn');
+        return;
+      }
       const maxBuy = st.max_buy ?? st.remaining ?? st.ticket_count ?? 1;
       const units = Math.max(1, Math.min(CONFIG.COMMUNITY_UNITS, maxBuy));
-      const r = await api('/games/community-lottery/buy', 'POST', { numbers: CONFIG.COMMUNITY_NUMBERS, units });
-      log(`社区三色球已购入：号码 ${CONFIG.COMMUNITY_NUMBERS.join(',')} × ${units} 注（余额 ${r.new_balance}）`);
+      const r = await api('/games/community-lottery/buy', 'POST', { numbers, units });
+      log(`社区三色球已购入：${tag} ${numbers.join(',')} × ${units} 注${bal(r.new_balance ?? st.balance)}`);
     } catch (e) {
       if (e.code === 'AUTH') throw e;
       log(`社区三色球失败：${e.message}`, 'error');

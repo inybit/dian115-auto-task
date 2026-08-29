@@ -29,17 +29,17 @@
 |---|---|---|
 | `AUTO_RUN` | `true` | 加载页面是否自动执行（每日一次） |
 | `SHOW_PANEL` | `true` | 显示右下角面板 |
-| `SIGNIN_MODE` | `normal` | 签到模式：`normal`(稳健必得) / `lucky`(运气，可能大奖也可能倒霉/空签) |
+| `SIGNIN_MODE` | `lucky` | 签到模式：`lucky`(运气，可能大奖也可能倒霉/空签) / `normal`(稳健必得) |
 | `SIGNIN_ENABLED` | `true` | 签到开关 |
 | `WHEEL_ENABLED` | `true` | 幸运转盘开关 |
 | `MONOPOLY_ENABLED` | `true` | 幸运大富翁开关 |
-| `COMMUNITY_ENABLED` | `false` | 社区三色球开关（投注消耗积分，默认关） |
-| `COMMUNITY_NUMBERS` | `[]` | 社区三色球选的 3 个号码，**必须恰好 3 个**（如 `[7, 21, 66]`） |
-| `COMMUNITY_UNITS` | `1` | 每期投注注数 |
+| `COMMUNITY_ENABLED` | `true` | 社区三色球开关（默认开：随机选 3 号投注，消耗积分） |
+| `COMMUNITY_NUMBERS` | `[]` | 社区三色球指定号码：填恰好 3 个（如 `[7, 21, 66]`）则固定下注；留空则每期随机选 3 个（1~99） |
+| `COMMUNITY_UNITS` | `2` | 每期投注注数 |
 | `BALANCE_FLOOR` | `10` | 余额安全阀，低于此值停止耗分动作 |
 
-> 想自动玩三色球：把 `COMMUNITY_ENABLED` 设为 `true` 并填 `COMMUNITY_NUMBERS = [a, b, c]`。
-> 社区三色球是"开奖类"玩法，选号影响中奖，**请自行判断是否值得投注**。
+> 社区三色球默认每期**随机选 3 个号码 × 2 注**（消耗积分）。固定下注：填 `COMMUNITY_NUMBERS = [a, b, c]`
+> 即用指定号码；留空则随机。不想自动投注，把 `COMMUNITY_ENABLED` 设为 `false`。
 
 ## BrowserProof 防爬（v1.1.0）
 

@@ -1,6 +1,6 @@
 {
   "name": "dian115-auto-task",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Tampermonkey userscript for m.dian115.com daily tasks (signin / wheel / monopoly / community lottery). Includes BrowserProof ECDSA signing client.",
   "private": true,
   "scripts": {

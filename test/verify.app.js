@@ -32,6 +32,8 @@ const canned = {
   '/api/portal/signin': { award: 8, new_balance: 114 },
   '/api/portal/lottery/wheel': { prize: { sector: 0, label: '+3', points: 3 } },         // prize is an OBJECT, no new_balance (mirrors real site)
   '/api/portal/games/monopoly/play': { award_points: 6, steps: [{ label: '+1', points: 1 }], new_balance: 115 },
+  '/api/portal/games/community-lottery/status': { participant_count: 12, ticket_count: 60, max_buy: 5, remaining: 5, balance: 500 },
+  '/api/portal/games/community-lottery/buy': { new_balance: 120 },
 };
 async function mockFetch(url, o = {}) {
   const h = o.headers || {}, body = o.body ? JSON.parse(o.body) : null;
@@ -73,20 +75,33 @@ async function verifySig(call) {
 
 (async () => {
   install();
-  console.log('--- fresh day: order + proof headers + signature + disabled community ---');
-  assert(/@version\s+1\.1\.[0-9]/.test(SRC), 'script on disk is v1.1.x');
+  console.log('--- fresh day: order + proof headers + signature + community random bet ---');
+  assert(/@version\s+1\.2\.[0-9]/.test(SRC), 'script on disk is v1.2.x');
   assert(SRC.includes('portal-browser-request/v1'), 'BrowserProof client present in source');
   eval(SRC); await drain();
   const biz = calls.filter(c => !c.url.includes('/auth/')).map(c => c.method + ' ' + c.url);
-  assert(JSON.stringify(biz) === JSON.stringify(['GET /api/portal/games/status', 'POST /api/portal/signin', 'POST /api/portal/lottery/wheel', 'POST /api/portal/games/monopoly/play']), 'business order = status → signin → wheel → monopoly');
-  assert(calls.some(c => c.url === '/api/portal/signin' && JSON.stringify(c.body) === '{"mode":"normal"}'), 'signin {mode:normal}');
+  assert(JSON.stringify(biz) === JSON.stringify([
+    'GET /api/portal/games/status',
+    'POST /api/portal/signin',
+    'POST /api/portal/lottery/wheel',
+    'POST /api/portal/games/monopoly/play',
+    'GET /api/portal/games/community-lottery/status',
+    'POST /api/portal/games/community-lottery/buy']), 'business order = status → signin → wheel → monopoly → community(status+buy)');
+  assert(calls.some(c => c.url === '/api/portal/signin' && JSON.stringify(c.body) === '{"mode":"lucky"}'), 'signin defaults to lucky mode');
   assert(calls.filter(c => c.url === '/api/portal/lottery/wheel').length === 1, 'wheel once (max_plays)');
   const wheelLine = logLines.find(l => l.includes('幸运转盘第'));
   assert(wheelLine && wheelLine.includes('+3'), 'wheel log renders prize OBJECT-readable (label "+3"), not [object Object]');
   assert(wheelLine && !wheelLine.includes('undefined'), 'wheel log omits balance when response lacks new_balance (no "undefined")');
   assert(!logLines.join('\n').includes('[object Object]'), 'no "[object Object]" anywhere in logs');
   assert(calls.filter(c => c.url === '/api/portal/games/monopoly/play').length === 1, 'monopoly once');
-  assert(calls.filter(c => c.url.includes('community-lottery/buy')).length === 0, 'community buy NOT auto-called (default off)');
+  const buy = calls.filter(c => c.url.includes('community-lottery/buy'));
+  assert(buy.length === 1, 'community buy auto-called once (enabled by default)');
+  if (buy[0]) {
+    const nums = buy[0].body.numbers;
+    assert(Array.isArray(nums) && nums.length === 3 && nums.every(n => Number.isInteger(n) && n >= 1 && n <= 99), `community picks 3 ints in 1..99 (${JSON.stringify(nums)})`);
+    assert(new Set(nums).size === 3, 'community numbers are distinct');
+    assert(buy[0].body.units === 2, 'community bets 2 units (COMMUNITY_UNITS default)');
+  }
   const si = calls.find(c => c.url === '/api/portal/signin');
   assert(si.headers['X-Portal-Browser-Proof'] === 'PROOF_ABC' && si.headers['X-Portal-Browser-TS'] && si.headers['X-Portal-Browser-Nonce'] && si.headers['X-Portal-Browser-Sig'], 'all 4 X-Portal-Browser-* headers on signin');
   assert(si.headers['X-Portal-Visitor-ID'] && si.headers['X-Portal-Current-Path'] === '/me/signin' && si.headers['X-Requested-With'] === 'XMLHttpRequest', 'visitor/path/xhr headers');
