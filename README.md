@@ -81,6 +81,9 @@ indexedDB `portal-browser-security-v1` / store `keys` / key `request-signing-p25
 - 改完把 `@version` 递增，`git tag` 打版
 - 保持 `CONFIG` 在顶部集中管理，便于用户配置
 - 新玩法上线：在 `api()` 加端点、在 `runAll()` 串起一个 `doXxx()`，并在 `README` 原理表补一行
+- **行为验证（本地，无网络）**：`node test/verify.app.js`
+  （mock fetch/IDB/DOM，用真实 WebCrypto 验签 BrowserProof 签名链；断言业务调用顺序、
+  proof 头、同日去重、proof 失效重试。exit 0 = green）
 
 ## License
 
