@@ -2,7 +2,7 @@
 // @name         癫影 m.dian115.com 每日自动任务
 // @namespace    https://github.com/inybit/dian115-auto-task
 // @description  自动完成 m.dian115.com 每日例行：签到、幸运转盘、幸运大富翁、社区三色球。内置站点 BrowserProof 签名防爬客户端（复用站点 ECDSA 私钥），复用当前登录会话。
-// @version      1.2.2
+// @version      1.3.0
 // @author       librarian
 // @match        https://m.dian115.com/*
 // @grant        none
@@ -49,7 +49,7 @@
     MONOPOLY_ENABLED: true,
     // 大富翁有服务端冷却（无时间戳可读）。遇"用完或冷却"时，等待 MONOPOLY_COOLDOWN_MS 重试，
     // 最多 MONOPOLY_MAX_ATTEMPTS 次；总等待预算 = COOLDOWN_MS × MAX_ATTEMPTS。设 0 即遇冷却直接停。
-    MONOPOLY_COOLDOWN_MS: 20000,
+    MONOPOLY_COOLDOWN_MS: 6000,
     MONOPOLY_MAX_ATTEMPTS: 10,
     COMMUNITY_ENABLED: true,
     // 社区三色球：号码范围 1..settings.number_max（默认 15，即 01-15）。
@@ -449,13 +449,31 @@
       </div>`;
     document.body.appendChild(panel);
     logBox = panel.querySelector('.d115-log');
+    // 收起后的小挂件（展开入口），常态隐藏。面板本身有内联 display:flex，会覆盖 hidden 属性的
+    // display:none——所以收起/展开必须用 panel.style.display 切换，不能用 panel.hidden。
+    const pill = document.createElement('div');
+    pill.id = 'dian115-auto-pill';
+    pill.title = '展开癫影任务面板';
+    pill.textContent = '癫影·任务面板';
+    pill.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:99999;padding:6px 14px;font:12px Menlo,Consolas,monospace;background:#10131a;color:#8ab4f8;border:1px solid #2a3040;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,.4);cursor:pointer;display:none;';
+    pill.addEventListener('click', () => setCollapsed(false));
+    document.body.appendChild(pill);
+    const toggleBtn = panel.querySelector('.d115-toggle');
+    let collapsed = false;
+    function setCollapsed(hide) {
+      collapsed = hide;
+      panel.style.display = hide ? 'none' : 'flex';
+      pill.style.display = hide ? 'block' : 'none';
+      toggleBtn.textContent = hide ? '面板展开' : '面板收起';
+      if (!hide) renderPanel();
+    }
     panel.querySelector('.d115-run').addEventListener('click', () => {
       const s = readState();
       saveState({ ...s, date: '-', state: 'manual' });
       log('手动触发执行……');
       runAll().finally(() => { const cur = readState(); saveState({ ...cur, date: today(), state: 'done' }); });
     });
-    panel.querySelector('.d115-toggle').addEventListener('click', () => { panel.hidden = !panel.hidden; });
+    toggleBtn.addEventListener('click', () => setCollapsed(!collapsed));
     renderPanel();
   }
 

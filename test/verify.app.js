@@ -81,7 +81,7 @@ async function verifySig(call) {
 (async () => {
   install();
   console.log('--- fresh day: order + proof headers + signature + community random bet ---');
-  assert(/@version\s+1\.2\.[0-9]/.test(SRC), 'script on disk is v1.2.x');
+  assert(/@version\s+1\.3\.[0-9]/.test(SRC), 'script on disk matches versioned build');
   assert(SRC.includes('portal-browser-request/v1'), 'BrowserProof client present in source');
   eval(SRC); await drain();
   const biz = calls.filter(c => !c.url.includes('/auth/')).map(c => c.method + ' ' + c.url);
